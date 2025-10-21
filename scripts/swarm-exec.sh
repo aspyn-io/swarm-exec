@@ -8,6 +8,7 @@ log() { echo "::notice::[$(date +%H:%M:%S)] $*"; }
 : "${SERVICE:?missing SERVICE}"
 : "${CMD:?missing CMD}"
 : "${SSH_USER:=opsadmin}"
+: "${SLEEP_BEFORE:=0}"
 : "${TIMEOUT:=600}"
 : "${INTERVAL:=5}"
 : "${USE_HEALTHZ:=true}"
@@ -172,6 +173,13 @@ wait_ready_remote() {
   done
 }
 
+sleep_before() {
+  if [ "$SLEEP_BEFORE" -gt 0 ]; then
+    log "Sleeping for $SLEEP_BEFORE seconds before proceeding..."
+    sleep "$SLEEP_BEFORE"
+  fi
+}
+
 main() {
   log "Service: $SERVICE"
   task="$(wait_for_task)"
@@ -182,6 +190,8 @@ main() {
   log "Selected Task: $task"
   log "Container ID:  $cid"
   log "Node ID:       $nid"
+
+  sleep_before
 
   if [ "$nid" = "$self" ]; then
     log "Container $cid is on this node"
