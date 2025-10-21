@@ -1,5 +1,5 @@
 name: "Swarm Exec"
-description: "Wait for a Docker Swarm service container to become healthy (or running if no healthcheck) and exec a command in it, even across nodes."
+description: "Wait for a Docker Swarm service container to become healthy (or running) and exec a command in it, even across nodes. Optionally probes /healthz inside the container."
 author: "Aspyn Engineering"
 branding:
   icon: "anchor"
@@ -10,7 +10,7 @@ inputs:
     description: "DOCKER_HOST (e.g. ssh://opsadmin@swarm-manager)"
     required: true
   service:
-    description: "Swarm service name (e.g. sales_app)"
+    description: "Swarm service name (e.g. example_app)"
     required: true
   command:
     description: "Command to execute inside the container"
@@ -21,13 +21,21 @@ inputs:
     required: false
     default: "opsadmin"
   timeout_seconds:
-    description: "Max time (seconds) to wait for container health"
+    description: "Max time (seconds) to wait for readiness"
     required: false
     default: "600"
   interval_seconds:
     description: "Polling interval (seconds)"
     required: false
     default: "5"
+  use_healthz:
+    description: "If true, also probe healthz_url inside the container and accept HTTP 200 as ready"
+    required: false
+    default: "true"
+  healthz_url:
+    description: "URL to probe inside the container (loopback). Example: http://127.0.0.1/healthz"
+    required: false
+    default: "http://127.0.0.1/healthz"
 
 runs:
   using: "composite"
@@ -45,6 +53,8 @@ runs:
         SSH_USER: ${{ inputs.ssh_user }}
         TIMEOUT: ${{ inputs.timeout_seconds }}
         INTERVAL: ${{ inputs.interval_seconds }}
+        USE_HEALTHZ: ${{ inputs.use_healthz }}
+        HEALTHZ_URL: ${{ inputs.healthz_url }}
       run: |
         set -euo pipefail
 
@@ -56,6 +66,7 @@ runs:
         get_cid() { docker inspect -f '{{.Status.ContainerStatus.ContainerID}}' "$1"; }
         get_nid() { docker inspect -f '{{.NodeID}}' "$1"; }
 
+        # Docker health status (or running-no-health if no HEALTHCHECK)
         local_health() {
           docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}running-no-health{{end}}' "$1"
         }
@@ -64,39 +75,87 @@ runs:
             "docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}running-no-health{{end}}' $2"
         }
 
+        # Optional HTTP /healthz probe (inside container). Success = HTTP 200.
+        http_ok_local() {
+          local cid="$1" url="$2"
+          docker exec -i "$cid" /bin/sh -lc "
+            if command -v curl >/dev/null 2>&1; then
+              curl -fsS -o /dev/null --max-time 2 \"$url\"
+            elif command -v wget >/dev/null 2>&1; then
+              wget -qO- --timeout=2 \"$url\" >/dev/null
+            else
+              exit 2
+            fi
+          " >/dev/null 2>&1
+        }
+        http_ok_remote() {
+          local ip="$1" cid="$2" url="$3"
+          ssh -o StrictHostKeyChecking=accept-new "$SSH_USER@$ip" "
+            docker exec -i $cid /bin/sh -lc '
+              if command -v curl >/dev/null 2>&1; then
+                curl -fsS -o /dev/null --max-time 2 \"$url\"
+              elif command -v wget >/dev/null 2>&1; then
+                wget -qO- --timeout=2 \"$url\" >/dev/null
+              else
+                exit 2
+              fi
+            '
+          " >/dev/null 2>&1
+        }
+
         node_ip() {
-          local ip
-          ip="$(docker node inspect -f '{{.Status.Addr}}' "$1" 2>/dev/null || true)"
+          local nid="$1" ip
+          ip="$(docker node inspect -f '{{.Status.Addr}}' "$nid" 2>/dev/null || true)"
           if [ -z "$ip" ] || [ "$ip" = "0.0.0.0" ]; then
-            ip="$(docker node inspect -f '{{.ManagerStatus.Addr}}' "$1" 2>/dev/null | cut -d: -f1)"
+            ip="$(docker node inspect -f '{{.ManagerStatus.Addr}}' "$nid" 2>/dev/null | cut -d: -f1)"
           fi
           echo "$ip"
         }
 
-        wait_health_local() {
+        # Waiters consider:
+        # - Healthy (Docker)  => ready
+        # - If USE_HEALTHZ    => HTTP 200 on HEALTHZ_URL => ready
+        # - Else if no Docker healthcheck => running-no-health => ready
+        wait_ready_local() {
           local cid="$1" start status
           start="$(date +%s)"
           while :; do
-            status="$(local_health "$cid")"
-            if [[ "$status" =~ ^(healthy|running-no-health)$ ]]; then
+            status="$(local_health "$cid")" || status="unknown"
+            if [ "$status" = "healthy" ]; then
               return 0
             fi
-            [[ $(( $(date +%s) - start )) -ge $TIMEOUT ]] && \
-              { echo "::error::Timeout waiting for $cid (status: $status)"; return 1; }
+            if [ "${USE_HEALTHZ,,}" = "true" ] && http_ok_local "$cid" "$HEALTHZ_URL"; then
+              return 0
+            fi
+            if [ "$status" = "running-no-health" ] && [ "${USE_HEALTHZ,,}" != "true" ]; then
+              return 0
+            fi
+            if [ $(( $(date +%s) - start )) -ge "$TIMEOUT" ]; then
+              echo "::error::Timeout waiting for readiness (status: $status)"
+              return 1
+            fi
             sleep "$INTERVAL"
           done
         }
 
-        wait_health_remote() {
+        wait_ready_remote() {
           local ip="$1" cid="$2" start status
           start="$(date +%s)"
           while :; do
-            status="$(remote_health "$ip" "$cid")"
-            if [[ "$status" =~ ^(healthy|running-no-health)$ ]]; then
+            status="$(remote_health "$ip" "$cid")" || status="unknown"
+            if [ "$status" = "healthy" ]; then
               return 0
             fi
-            [[ $(( $(date +%s) - start )) -ge $TIMEOUT ]] && \
-              { echo "::error::Timeout waiting for $cid@$ip (status: $status)"; return 1; }
+            if [ "${USE_HEALTHZ,,}" = "true" ] && http_ok_remote "$ip" "$cid" "$HEALTHZ_URL"; then
+              return 0
+            fi
+            if [ "$status" = "running-no-health" ] && [ "${USE_HEALTHZ,,}" != "true" ]; then
+              return 0
+            fi
+            if [ $(( $(date +%s) - start )) -ge "$TIMEOUT" ]; then
+              echo "::error::Timeout waiting for readiness (status: $status)"
+              return 1
+            fi
             sleep "$INTERVAL"
           done
         }
@@ -115,26 +174,26 @@ runs:
         }
 
         task="$(get_task || true)"
-        [ -z "$task" ] && { echo "::error::No running task found for $SERVICE"; exit 1; }
+        [ -z "${task:-}" ] && { echo "::error::No running task found for $SERVICE"; exit 1; }
 
         cid="$(get_cid "$task")"
         nid="$(get_nid "$task")"
         self="$(docker info -f '{{.Swarm.NodeID}}')"
 
         log "Service: $SERVICE"
-        log "Task: $task"
-        log "NodeID: $nid"
+        log "Task:    $task"
+        log "NodeID:  $nid"
 
         if [ "$nid" = "$self" ]; then
           log "Container $cid is on this node"
-          until wait_health_local "$cid"; do refresh_task; done
+          until wait_ready_local "$cid"; do refresh_task; done
           docker exec -i "$cid" /bin/sh -lc "$CMD"
         else
           ip="$(node_ip "$nid")"
           [ -z "$ip" ] && { echo "::error::Unable to resolve IP for node $nid"; exit 1; }
           log "Container $cid is on remote node $ip"
           ssh-keyscan -H "$ip" >> ~/.ssh/known_hosts 2>/dev/null || true
-          until wait_health_remote "$ip" "$cid"; do refresh_task; done
+          until wait_ready_remote "$ip" "$cid"; do refresh_task; done
           ssh "$SSH_USER@$ip" "docker exec -i $cid /bin/sh -lc '$CMD'"
         fi
 
