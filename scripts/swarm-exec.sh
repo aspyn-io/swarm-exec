@@ -9,7 +9,7 @@ log() { echo "::notice::[$(date +%H:%M:%S)] $*"; }
 : "${CMD:?missing CMD}"
 : "${SSH_USER:=opsadmin}"
 : "${SLEEP_BEFORE:=0}"
-: "${TIMEOUT:=600}"
+: "${TIMEOUT:=120}"
 : "${INTERVAL:=5}"
 : "${USE_HEALTHZ:=true}"
 : "${HEALTHZ_URL:=http://127.0.0.1/healthz}"
