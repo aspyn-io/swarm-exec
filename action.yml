@@ -1,0 +1,141 @@
+name: "Swarm Exec"
+description: "Wait for a Docker Swarm service container to become healthy (or running if no healthcheck) and exec a command in it, even across nodes."
+author: "Aspyn Engineering"
+branding:
+  icon: "anchor"
+  color: "blue"
+
+inputs:
+  docker_host:
+    description: "DOCKER_HOST (e.g. ssh://opsadmin@swarm-manager)"
+    required: true
+  service:
+    description: "Swarm service name (e.g. sales_app)"
+    required: true
+  command:
+    description: "Command to execute inside the container"
+    required: false
+    default: "php artisan migrate"
+  ssh_user:
+    description: "SSH user for connecting to remote Swarm nodes"
+    required: false
+    default: "opsadmin"
+  timeout_seconds:
+    description: "Max time (seconds) to wait for container health"
+    required: false
+    default: "600"
+  interval_seconds:
+    description: "Polling interval (seconds)"
+    required: false
+    default: "5"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Prepare environment
+      shell: bash
+      run: mkdir -p ~/.ssh
+
+    - name: Wait for healthy + exec
+      shell: bash
+      env:
+        DOCKER_HOST: ${{ inputs.docker_host }}
+        SERVICE: ${{ inputs.service }}
+        CMD: ${{ inputs.command }}
+        SSH_USER: ${{ inputs.ssh_user }}
+        TIMEOUT: ${{ inputs.timeout_seconds }}
+        INTERVAL: ${{ inputs.interval_seconds }}
+      run: |
+        set -euo pipefail
+
+        log() { echo "::notice::[$(date +%H:%M:%S)] $*"; }
+
+        get_task() {
+          docker service ps --filter 'desired-state=running' --no-trunc -q "$SERVICE" | head -n1
+        }
+        get_cid() { docker inspect -f '{{.Status.ContainerStatus.ContainerID}}' "$1"; }
+        get_nid() { docker inspect -f '{{.NodeID}}' "$1"; }
+
+        local_health() {
+          docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}running-no-health{{end}}' "$1"
+        }
+        remote_health() {
+          ssh -o StrictHostKeyChecking=accept-new "$SSH_USER@$1" \
+            "docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}running-no-health{{end}}' $2"
+        }
+
+        node_ip() {
+          local ip
+          ip="$(docker node inspect -f '{{.Status.Addr}}' "$1" 2>/dev/null || true)"
+          if [ -z "$ip" ] || [ "$ip" = "0.0.0.0" ]; then
+            ip="$(docker node inspect -f '{{.ManagerStatus.Addr}}' "$1" 2>/dev/null | cut -d: -f1)"
+          fi
+          echo "$ip"
+        }
+
+        wait_health_local() {
+          local cid="$1" start status
+          start="$(date +%s)"
+          while :; do
+            status="$(local_health "$cid")"
+            if [[ "$status" =~ ^(healthy|running-no-health)$ ]]; then
+              return 0
+            fi
+            [[ $(( $(date +%s) - start )) -ge $TIMEOUT ]] && \
+              { echo "::error::Timeout waiting for $cid (status: $status)"; return 1; }
+            sleep "$INTERVAL"
+          done
+        }
+
+        wait_health_remote() {
+          local ip="$1" cid="$2" start status
+          start="$(date +%s)"
+          while :; do
+            status="$(remote_health "$ip" "$cid")"
+            if [[ "$status" =~ ^(healthy|running-no-health)$ ]]; then
+              return 0
+            fi
+            [[ $(( $(date +%s) - start )) -ge $TIMEOUT ]] && \
+              { echo "::error::Timeout waiting for $cid@$ip (status: $status)"; return 1; }
+            sleep "$INTERVAL"
+          done
+        }
+
+        refresh_task() {
+          local new_task new_cid
+          new_task="$(get_task || true)"
+          if [ -n "$new_task" ]; then
+            new_cid="$(get_cid "$new_task" || true)"
+            if [ -n "$new_cid" ] && [ "$new_cid" != "$cid" ]; then
+              cid="$new_cid"
+              task="$new_task"
+              nid="$(get_nid "$task")"
+            fi
+          fi
+        }
+
+        task="$(get_task || true)"
+        [ -z "$task" ] && { echo "::error::No running task found for $SERVICE"; exit 1; }
+
+        cid="$(get_cid "$task")"
+        nid="$(get_nid "$task")"
+        self="$(docker info -f '{{.Swarm.NodeID}}')"
+
+        log "Service: $SERVICE"
+        log "Task: $task"
+        log "NodeID: $nid"
+
+        if [ "$nid" = "$self" ]; then
+          log "Container $cid is on this node"
+          until wait_health_local "$cid"; do refresh_task; done
+          docker exec -i "$cid" /bin/sh -lc "$CMD"
+        else
+          ip="$(node_ip "$nid")"
+          [ -z "$ip" ] && { echo "::error::Unable to resolve IP for node $nid"; exit 1; }
+          log "Container $cid is on remote node $ip"
+          ssh-keyscan -H "$ip" >> ~/.ssh/known_hosts 2>/dev/null || true
+          until wait_health_remote "$ip" "$cid"; do refresh_task; done
+          ssh "$SSH_USER@$ip" "docker exec -i $cid /bin/sh -lc '$CMD'"
+        fi
+
+        log "Command completed successfully"
