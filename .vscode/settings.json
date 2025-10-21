@@ -1,0 +1,23 @@
+{
+  "files.associations": {
+    "*.bats": "shellscript"
+  },
+  "shellcheck.enableQuickFix": true,
+  "shellcheck.run": "onType",
+  "shellformat.effectLanguages": [
+    "shellscript",
+    "dockerfile",
+    "dotenv",
+    "hosts",
+    "jvmoptions",
+    "ignore",
+    "gitignore",
+    "spring-boot-properties",
+    "azcli",
+    "bats"
+  ],
+  "bashIde.shellcheckPath": "shellcheck",
+  "bashIde.explainshellEndpoint": "https://explainshell.com/explain",
+  "testExplorer.useNativeTesting": true,
+  "bats.batsBinary": "bats"
+}

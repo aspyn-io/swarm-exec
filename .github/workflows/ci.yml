@@ -1,0 +1,63 @@
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck && shellcheck -x scripts/swarm-exec.sh
+
+  unit-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Run unit tests
+        run: bats tests/unit.bats
+
+  integration-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Init local Swarm
+        run: |
+          docker version
+          docker swarm init --advertise-addr 127.0.0.1
+
+      - name: Deploy nginx service with healthcheck
+        run: |
+          docker service create --name test_app \
+            --health-cmd "wget -qO- http://127.0.0.1:80 >/dev/null || exit 1" \
+            --health-interval 5s --health-retries 3 --health-timeout 2s \
+            -p 8088:80 \
+            nginx:alpine
+
+      - name: Run action script (local path)
+        env:
+          SERVICE: test_app
+          CMD: "wget -qO- http://127.0.0.1 || true"
+          TIMEOUT: "120"
+          INTERVAL: "5"
+          USE_HEALTHZ: "false"
+        run: bash scripts/swarm-exec.sh
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker service rm test_app || true
+          docker swarm leave --force || true

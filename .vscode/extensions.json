@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "jetmartin.bats",
+    "timonwong.shellcheck",
+    "foxundermoon.shell-format",
+    "mads-hartmann.bash-ide-vscode",
+    "ms-vscode.test-adapter-converter",
+    "hbenl.vscode-test-explorer"
+  ],
+  "unwantedRecommendations": []
+}
