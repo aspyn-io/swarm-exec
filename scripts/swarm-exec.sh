@@ -75,7 +75,7 @@ http_ok_remote() {
   local ip="$1" cid="$2" url="$3"
   ssh -o StrictHostKeyChecking=accept-new "$SSH_USER@$ip" "
     docker exec -i $cid /bin/sh -lc '
-      if command -v curl >/devnull 2>&1; then
+      if command -v curl >/dev/null 2>&1; then
         curl -fsS -o /dev/null --max-time 2 \"$url\"
       elif command -v wget >/dev/null 2>&1; then
         wget -qO- --timeout=2 \"$url\" >/dev/null
