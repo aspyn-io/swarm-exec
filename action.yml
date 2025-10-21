@@ -36,6 +36,10 @@ inputs:
     description: "URL to probe inside the container (loopback). Example: http://127.0.0.1/healthz"
     required: false
     default: "http://127.0.0.1/healthz"
+  sleep_before:
+    description: "Time to sleep before running command"
+    required: false
+    default: "0"
 
 runs:
   using: "composite"
@@ -57,4 +61,5 @@ runs:
         INTERVAL: ${{ inputs.interval_seconds }}
         USE_HEALTHZ: ${{ inputs.use_healthz }}
         HEALTHZ_URL: ${{ inputs.healthz_url }}
+        SLEEP_BEFORE: ${{ inputs.sleep_before }}
       run: bash ${{ github.action_path }}/scripts/swarm-exec.sh
