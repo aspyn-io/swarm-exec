@@ -56,7 +56,7 @@ teardown() {
 load_script() {
   # source the script without running main()
   export SERVICE="svc" CMD="true" TIMEOUT="2" INTERVAL="1" USE_HEALTHZ="false"
-  source scripts/swarm-exec.sh sourced
+  source "${BATS_TEST_DIRNAME}/../scripts/swarm-exec.sh" sourced
 }
 
 @test "wait_for_task times out when no tasks appear" {
@@ -88,12 +88,12 @@ EOF
 
 @test "wait_for_cid returns cid once present" {
   # first returns no cid, then returns a cid
-  cat > "$TMPDIR/docker" <<'EOF'
+  cat > "$TMPDIR/docker" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "$1" = "inspect" ]; then
-  if [ ! -f /tmp/flip ]; then
-    touch /tmp/flip
+if [ "\$1" = "inspect" ]; then
+  if [ ! -f "$TMPDIR/flip" ]; then
+    touch "$TMPDIR/flip"
     exit 1
   else
     # format evaluates to the CID; emit something
@@ -101,15 +101,18 @@ if [ "$1" = "inspect" ]; then
     exit 0
   fi
 fi
-if [ "$1" = "info" ]; then echo "NODE_SELF"; fi
-if [ "$1" = "service" ] && [ "$2" = "ps" ]; then echo "abc123 Running 1s ago"; fi
+if [ "\$1" = "info" ]; then echo "NODE_SELF"; fi
+if [ "\$1" = "service" ] && [ "\$2" = "ps" ]; then echo "abc123 Running 1s ago"; fi
 EOF
   chmod +x "$TMPDIR/docker"
 
   load_script
   run wait_for_cid abc123
   [ "$status" -eq 0 ]
-  [ "$output" = "deadbeefcid" ]
+  # Extract the last line of output (which should be the container ID)
+  local last_line
+  last_line="$(echo "$output" | tail -n1)"
+  [ "$last_line" = "deadbeefcid" ]
 }
 
 @test "wait_ready_local accepts healthy" {

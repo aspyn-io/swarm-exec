@@ -101,7 +101,8 @@ wait_ready_local() {
   while :; do
     # container replaced?
     if ! docker inspect "$cid_ref" >/dev/null 2>&1; then
-      local t="$(get_task_running || true)"
+      local t
+      t="$(get_task_running || true)"
       local c=""; [ -n "$t" ] && c="$(get_cid "$t" 2>/dev/null || true)"
       if [ -n "$c" ] && [ "$c" != "$cid_ref" ]; then
         log "Container changed during wait -> $cid_ref -> $c"
@@ -142,7 +143,8 @@ wait_ready_remote() {
   start="$(date +%s)"
   while :; do
     if ! ssh -o StrictHostKeyChecking=accept-new "$SSH_USER@$ip" "docker inspect $cid_ref >/dev/null 2>&1"; then
-      local t="$(get_task_running || true)"
+      local t
+      t="$(get_task_running || true)"
       local c=""; [ -n "$t" ] && c="$(get_cid "$t" 2>/dev/null || true)"
       if [ -n "$c" ] && [ "$c" != "$cid_ref" ]; then
         log "Remote container changed during wait -> $cid_ref -> $c"

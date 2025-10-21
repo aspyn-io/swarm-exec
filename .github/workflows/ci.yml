@@ -26,6 +26,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bats
 
+      - name: Check bats version
+        run: bats --version
+
       - name: Run unit tests
         run: bats tests/unit.bats
 
