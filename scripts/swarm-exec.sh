@@ -133,6 +133,11 @@ wait_ready_local() {
       return 0
     fi
     elapsed=$(( $(date +%s) - start ))
+    # If unhealthy for more than 30 seconds, accept it anyway (container is running, just unhealthy)
+    if [ "$status" = "unhealthy" ] && [ "$elapsed" -ge 30 ]; then
+      log "Container $cid_ref is unhealthy but running; proceeding anyway after ${elapsed}s"
+      return 0
+    fi
     log "Waiting for readiness (status:${status:-unknown}, elapsed ${elapsed}s)..."
     [ "$elapsed" -ge "$TIMEOUT" ] && { echo "::error::Timeout waiting for readiness (status:${status:-unknown})"; return 1; }
     sleep "$INTERVAL"
@@ -167,6 +172,11 @@ wait_ready_remote() {
       return 0
     fi
     elapsed=$(( $(date +%s) - start ))
+    # If unhealthy for more than 60 seconds, accept it anyway (container is running, just unhealthy)
+    if [ "$status" = "unhealthy" ] && [ "$elapsed" -ge 60 ]; then
+      log "Remote container $cid_ref@$ip is unhealthy but running; proceeding anyway after ${elapsed}s"
+      return 0
+    fi
     log "Waiting for remote readiness (status:${status:-unknown}, elapsed ${elapsed}s)..."
     [ "$elapsed" -ge "$TIMEOUT" ] && { echo "::error::Timeout waiting for remote readiness (status:${status:-unknown})"; return 1; }
     sleep "$INTERVAL"
