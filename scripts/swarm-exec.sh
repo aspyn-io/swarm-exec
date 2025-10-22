@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-log() { echo "::notice::[$(date +%H:%M:%S)] $*"; }
+log() { echo "::notice::[$(date +%H:%M:%S)] $*" >&2; }
 
 # --- inputs (env) expected ---
 : "${SERVICE:?missing SERVICE}"
