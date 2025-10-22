@@ -202,7 +202,8 @@ main() {
     [ -z "$ip" ] && { echo "::error::Unable to resolve IP for node $nid"; exit 1; }
     log "Container $cid is on remote node $ip"
     mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    : > ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
+    touch ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
+    ssh-keyscan -H "$ip" >> ~/.ssh/known_hosts 2>/dev/null || log "Warning: Could not scan SSH keys for $ip"
     until wait_ready_remote "$ip" "$cid"; do :; done
     ssh -o StrictHostKeyChecking=accept-new "$SSH_USER@$ip" "docker exec -i $cid /bin/sh -lc '$CMD'"
   fi
